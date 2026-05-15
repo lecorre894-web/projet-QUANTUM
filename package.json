@@ -1,0 +1,1 @@
+{"name":"projet-quantum","version":"1.0.0","description":"Projet QUANTUM - cockpit runtime Node/Python safe","main":"main.js","scripts":{"start":"node main.js","dev":"node main.js","scan":"node scripts/scan-workspace.js","safe":"node scripts/safe-check.js"},"dependencies":{"express":"latest","ws":"latest","cors":"latest"},"devDependencies":{}}

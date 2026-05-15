@@ -1,0 +1,4 @@
+project: projet-QUANTUM
+mode: SAFE_RUNTIME
+honesty_guard: true
+network_policy: calm_no_aggressive_reconnect
