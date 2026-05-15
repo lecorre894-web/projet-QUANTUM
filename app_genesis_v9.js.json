@@ -1,0 +1,575 @@
+/*
+TRILLIONS SUPREME BRAIN V9 — GENESIS SOVEREIGN COCKPIT
+======================================================
+Objectif demandé :
+- Chat IA "GENESIS Super IA Suprême Souveraine" via Pollinations gratuit, sans clé
+- Chat terminal libre pour poser des milliards de sujets/questions
+- Prometheus réel : endpoint /metrics au format Prometheus, sans dépendance payante
+- Onglets petits/compacts : OK / ACTIF / STANDBY / POSSIBLE
+- Voir les modules s'activer en temps réel
+- Que du réel côté état : statut basé sur détection runtime réelle, pas hallucination
+- Web3 en lecture seule
+- Aucune seed, aucune clé privée, aucune transaction automatique, aucun mining automatique
+
+Install :
+  npm install express socket.io axios web3
+
+Launch :
+  node app.js
+*/
+
+"use strict";
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const http = require("http");
+const https = require("https");
+const crypto = require("crypto");
+const express = require("express");
+const { Server } = require("socket.io");
+
+let axios = null;
+let Web3 = null;
+try { axios = require("axios"); } catch(e) {}
+try {
+  const web3Pkg = require("web3");
+  Web3 = web3Pkg.Web3 || web3Pkg;
+} catch(e) {}
+
+const APP = express();
+const SERVER = http.createServer(APP);
+const IO = new Server(SERVER, { cors: { origin: "*" } });
+
+APP.use(express.json({ limit: "20mb" }));
+APP.use(express.urlencoded({ extended: true, limit: "20mb" }));
+
+const CONFIG = {
+  APP_NAME: "TRILLIONS_SUPREME_BRAIN_V9_GENESIS",
+  PORT: Number(process.env.PORT || 3000),
+  BUILD: "GENESIS_SOVEREIGN_FREE_RUNTIME",
+  AI_NAME: "GENESIS Super IA Suprême Souveraine",
+  AI_PROVIDER: "Pollinations",
+  PROMETHEUS_ENDPOINT: "/metrics",
+  SAFE_MODE: true
+};
+
+const STATE = {
+  boot: new Date().toISOString(),
+  bootId: crypto.randomBytes(8).toString("hex"),
+  tick: 0,
+  logs: [],
+  events: [],
+  chat: [],
+  tabs: {},
+  modules: {},
+  system: {},
+  legacy: {},
+  web3: {
+    status: "STANDBY",
+    provider: null,
+    chainId: null,
+    block: null,
+    error: null
+  },
+  ai: {
+    status: "STANDBY",
+    provider: "Pollinations",
+    lastReply: null,
+    error: null
+  },
+  prometheus: {
+    status: "ACTIVE",
+    endpoint: "/metrics",
+    scrapes: 0
+  },
+  miningBridge: {
+    status: "STANDBY",
+    connected: false,
+    rigs: [],
+    lastUpdate: null
+  },
+  safety: {
+    noSeed: true,
+    noPrivateKey: true,
+    noAutoTransaction: true,
+    noAutoMining: true,
+    readOnlyWeb3: true,
+    factualStatusOnly: true
+  },
+  metrics: {
+    uptimeSec: 0,
+    rssMB: 0,
+    heapMB: 0,
+    freeRamGB: 0,
+    load1: 0,
+    logsCount: 0,
+    connectedSockets: 0,
+    chatCount: 0
+  }
+};
+
+const CLIENTS = new Set();
+
+function now(){ return new Date().toISOString(); }
+function time(){ return new Date().toLocaleTimeString("fr-FR"); }
+
+function emit(name, data){ IO.emit(name, data); }
+
+function log(channel, message, level="info"){
+  const item = { ts: now(), channel, message, level };
+  STATE.logs.push(item);
+  if(STATE.logs.length > 1200) STATE.logs.shift();
+  console.log(`[${channel}] ${item.ts} -> ${message}`);
+  emit("log", item);
+  return item;
+}
+
+function event(type, title, data={}){
+  const item = { ts: now(), type, title, data };
+  STATE.events.push(item);
+  if(STATE.events.length > 800) STATE.events.shift();
+  emit("event", item);
+  return item;
+}
+
+function hasModule(name){
+  try { require.resolve(name); return true; } catch { return false; }
+}
+
+function fileInfo(rel){
+  try{
+    const full = path.resolve(process.cwd(), rel);
+    if(!full.startsWith(process.cwd())) return { present:false };
+    if(!fs.existsSync(full)) return { present:false };
+    const st = fs.statSync(full);
+    return { present:true, bytes:st.size, modified:st.mtime.toISOString() };
+  } catch(e) { return { present:false, error:e.message }; }
+}
+
+function readFirst(files, max=1024*1024*20){
+  for(const f of files){
+    try{
+      if(fs.existsSync(f)){
+        const stat = fs.statSync(f);
+        const buf = fs.readFileSync(f);
+        const text = buf.slice(0, Math.min(stat.size, max)).toString("utf8");
+        return { file:f, text, bytes:stat.size };
+      }
+    }catch(e){}
+  }
+  return null;
+}
+
+function sha256(s){ return crypto.createHash("sha256").update(s).digest("hex"); }
+function countKeyword(s,k){
+  return (s.match(new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi")) || []).length;
+}
+
+function setTab(id, label, status, details="", action=null){
+  STATE.tabs[id] = {
+    id, label, status, details, action,
+    updated: now()
+  };
+}
+
+function scanRuntime(){
+  const mem = process.memoryUsage();
+  STATE.system = {
+    node: process.version,
+    platform: os.platform(),
+    arch: os.arch(),
+    hostname: os.hostname(),
+    cpu: os.cpus()[0]?.model || "unknown",
+    threads: os.cpus().length,
+    totalRamGB: Math.round(os.totalmem()/1024/1024/1024),
+    freeRamGB: Math.round(os.freemem()/1024/1024/1024),
+    loadavg: os.loadavg(),
+    pid: process.pid,
+    cwd: process.cwd(),
+    codespaces: Boolean(process.env.CODESPACES),
+    codespaceName: process.env.CODESPACE_NAME || null
+  };
+
+  STATE.modules = {
+    express: true,
+    socketio: true,
+    axios: !!axios,
+    web3: !!Web3,
+    pollinations: true,
+    prometheus_metrics: true,
+    fs: true,
+    crypto: true,
+    http: true,
+    https: true
+  };
+
+  STATE.metrics = {
+    uptimeSec: Math.round(process.uptime()),
+    rssMB: Math.round(mem.rss/1024/1024),
+    heapMB: Math.round(mem.heapUsed/1024/1024),
+    freeRamGB: STATE.system.freeRamGB,
+    load1: Number(os.loadavg()[0].toFixed(3)),
+    logsCount: STATE.logs.length,
+    connectedSockets: CLIENTS.size,
+    chatCount: STATE.chat.length
+  };
+
+  const legacy = readFirst(["trillions_legacy.launch","launch.txt","launch.json",".vscode/launch.json"]);
+  if(legacy){
+    const keys = ["node","npm","app.js","launch","attach","api","web3","eth","btc","weth","wallet","address","gas","rpc","wss","azure","apache","iis","c++","cpp","c#","java","dll","binary","miner","stratum","openai","pollinations"];
+    STATE.legacy = {
+      present:true,
+      source:legacy.file,
+      bytes:legacy.bytes,
+      lines:legacy.text.split(/\r?\n/).length,
+      sha256:sha256(legacy.text),
+      keywords:Object.fromEntries(keys.map(k=>[k,countKeyword(legacy.text,k)]))
+    };
+  } else {
+    STATE.legacy = { present:false };
+  }
+
+  setTab("runtime", "Runtime Node", "ACTIVE", `${STATE.system.node} | ${STATE.system.threads} threads`);
+  setTab("dashboard", "Dashboard UI", "ACTIVE", "Socket.IO + cockpit mobile");
+  setTab("legacy", "Legacy scan", STATE.legacy.present ? "ACTIVE" : "STANDBY", STATE.legacy.present ? `${STATE.legacy.lines} lignes` : "Aucun launch legacy détecté");
+  setTab("pollinations", "GENESIS IA", STATE.ai.status, STATE.ai.error || "Chat gratuit via Pollinations");
+  setTab("prometheus", "Prometheus", "ACTIVE", "/metrics prêt");
+  setTab("web3", "Web3 lecture seule", STATE.web3.status, STATE.web3.error || (STATE.web3.block ? `Block ${STATE.web3.block}` : "RPC non connecté"));
+  setTab("mining", "Rig metrics bridge", STATE.miningBridge.connected ? "ACTIVE" : "STANDBY", STATE.miningBridge.connected ? `${STATE.miningBridge.rigs.length} rig(s)` : "POST /api/mining possible");
+  setTab("axios", "API HTTP axios", axios ? "OK" : "POSSIBLE", axios ? "Installé" : "npm install axios");
+  setTab("web3mod", "Module Web3", Web3 ? "OK" : "POSSIBLE", Web3 ? "Installé" : "npm install web3");
+  setTab("localai", "LLM local", "POSSIBLE", "Ollama/LM Studio possible plus tard, non actif ici");
+  setTab("cplus", "Bridge C++", "POSSIBLE", "Possible via addon/binaire local, non attaché");
+}
+
+function snapshot(){
+  scanRuntime();
+  return {
+    app: CONFIG.APP_NAME,
+    boot: STATE.boot,
+    bootId: STATE.bootId,
+    tick: STATE.tick,
+    safety: STATE.safety,
+    system: STATE.system,
+    modules: STATE.modules,
+    tabs: STATE.tabs,
+    legacy: STATE.legacy,
+    web3: STATE.web3,
+    ai: STATE.ai,
+    prometheus: STATE.prometheus,
+    miningBridge: STATE.miningBridge,
+    metrics: STATE.metrics,
+    logs: STATE.logs.slice(-250),
+    events: STATE.events.slice(-120),
+    chat: STATE.chat.slice(-40)
+  };
+}
+
+function pollinationsAsk(messages){
+  STATE.ai.status = "ACTIVE";
+  return new Promise((resolve,reject)=>{
+    const body = JSON.stringify({
+      model: "openai",
+      messages: [
+        {
+          role:"system",
+          content:
+            "Tu es GENESIS Super IA Suprême Souveraine, intégrée au runtime TRILLIONS. " +
+            "Tu réponds en français, clairement, techniquement. " +
+            "Tu n'inventes pas d'état système : si une info n'est pas dans l'état fourni, tu dis que ce n'est pas confirmé. " +
+            "Tu respectes les garde-fous : aucune seed, aucune clé privée, aucune transaction automatique, aucun gain crypto promis."
+        },
+        ...messages
+      ],
+      temperature: 0.35
+    });
+
+    const req = https.request({
+      hostname:"text.pollinations.ai",
+      path:"/openai",
+      method:"POST",
+      timeout:30000,
+      headers:{
+        "Content-Type":"application/json",
+        "Content-Length":Buffer.byteLength(body)
+      }
+    }, res=>{
+      let data="";
+      res.on("data", c=>data+=c);
+      res.on("end", ()=>{
+        try{
+          const j=JSON.parse(data);
+          resolve(j.choices?.[0]?.message?.content || data);
+        }catch(e){ resolve(data); }
+      });
+    });
+    req.on("timeout",()=>req.destroy(new Error("Pollinations timeout")));
+    req.on("error",reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function web3Probe(provider){
+  if(!Web3) throw new Error("Module web3 absent");
+  if(!provider || !/^https?:\/\//.test(provider)) throw new Error("RPC HTTPS requis");
+  const w3 = new Web3(provider);
+  const chainId = await w3.eth.getChainId();
+  const block = await w3.eth.getBlockNumber();
+  STATE.web3.status = "ACTIVE";
+  STATE.web3.provider = provider.replace(/\/\/.*@/,"//***@");
+  STATE.web3.chainId = String(chainId);
+  STATE.web3.block = String(block);
+  STATE.web3.error = null;
+  event("web3", "RPC connecté", { chainId:String(chainId), block:String(block) });
+  return STATE.web3;
+}
+
+/* API */
+
+APP.get("/api/state",(req,res)=>res.json(snapshot()));
+APP.get("/api/health",(req,res)=>res.json({ok:true, app:CONFIG.APP_NAME, safety:STATE.safety, metrics:STATE.metrics}));
+APP.post("/api/rescan",(req,res)=>{
+  scanRuntime();
+  log("RESCAN","Workspace rescanné");
+  res.json({ok:true, tabs:STATE.tabs, legacy:STATE.legacy});
+});
+
+APP.post("/api/chat", async (req,res)=>{
+  const message = String(req.body?.message || "").trim();
+  const withState = !!req.body?.withState;
+  if(!message) return res.status(400).json({ok:false,error:"message requis"});
+
+  const msgs = [];
+  if(withState){
+    const s = snapshot();
+    msgs.push({
+      role:"system",
+      content:"État runtime confirmé JSON abrégé: " + JSON.stringify({
+        modules:s.modules, tabs:s.tabs, legacy:s.legacy, web3:s.web3, metrics:s.metrics, mining:s.miningBridge
+      }).slice(0,7000)
+    });
+  }
+  STATE.chat.push({role:"user",content:message,ts:now()});
+  if(STATE.chat.length>80) STATE.chat = STATE.chat.slice(-80);
+
+  log("GENESIS","> " + message.slice(0,100));
+
+  try{
+    const history = STATE.chat.slice(-20).map(x=>({role:x.role==="assistant"?"assistant":"user",content:x.content}));
+    const reply = await pollinationsAsk([...msgs,...history]);
+    STATE.ai.lastReply = reply;
+    STATE.ai.error = null;
+    STATE.ai.status = "ACTIVE";
+    STATE.chat.push({role:"assistant",content:reply,ts:now()});
+    log("GENESIS","< " + String(reply).slice(0,100));
+    res.json({ok:true,reply});
+  }catch(e){
+    STATE.ai.status = "STANDBY";
+    STATE.ai.error = e.message;
+    log("GENESIS","Erreur IA: "+e.message,"warn");
+    res.status(500).json({ok:false,error:e.message});
+  }
+});
+
+APP.post("/api/web3/probe", async (req,res)=>{
+  try{
+    const out = await web3Probe(String(req.body?.provider || ""));
+    log("WEB3",`RPC OK chain=${out.chainId} block=${out.block}`);
+    res.json({ok:true,web3:out});
+  }catch(e){
+    STATE.web3.status = Web3 ? "STANDBY" : "POSSIBLE";
+    STATE.web3.error = e.message;
+    log("WEB3","Erreur: "+e.message,"warn");
+    res.status(400).json({ok:false,error:e.message});
+  }
+});
+
+APP.post("/api/mining",(req,res)=>{
+  const rigs = Array.isArray(req.body?.rigs) ? req.body.rigs : [];
+  STATE.miningBridge.connected = true;
+  STATE.miningBridge.status = "ACTIVE";
+  STATE.miningBridge.rigs = rigs.slice(0,64).map((r,i)=>({
+    id:String(r.id || `rig${i+1}`).slice(0,60),
+    coin:String(r.coin || "UNKNOWN").slice(0,20),
+    algo:String(r.algo || "").slice(0,30),
+    hashrate:Number(r.hashrate || 0),
+    unit:String(r.unit || "H/s").slice(0,12),
+    accepted:Number(r.accepted || 0),
+    rejected:Number(r.rejected || 0),
+    powerW:Number(r.powerW || 0),
+    tempC:r.tempC==null?null:Number(r.tempC)
+  }));
+  STATE.miningBridge.lastUpdate = now();
+  log("MINING",`${STATE.miningBridge.rigs.length} rig(s) métriques reçues`);
+  emit("mining",STATE.miningBridge);
+  res.json({ok:true,mining:STATE.miningBridge});
+});
+
+APP.get("/metrics",(req,res)=>{
+  STATE.prometheus.scrapes++;
+  scanRuntime();
+  const lines = [
+    "# HELP trillions_uptime_seconds Runtime uptime",
+    "# TYPE trillions_uptime_seconds gauge",
+    `trillions_uptime_seconds ${STATE.metrics.uptimeSec}`,
+    "# HELP trillions_memory_rss_mb Process RSS memory",
+    "# TYPE trillions_memory_rss_mb gauge",
+    `trillions_memory_rss_mb ${STATE.metrics.rssMB}`,
+    "# HELP trillions_heap_mb Process heap memory",
+    "# TYPE trillions_heap_mb gauge",
+    `trillions_heap_mb ${STATE.metrics.heapMB}`,
+    "# HELP trillions_connected_sockets Connected dashboard sockets",
+    "# TYPE trillions_connected_sockets gauge",
+    `trillions_connected_sockets ${STATE.metrics.connectedSockets}`,
+    "# HELP trillions_chat_count Chat messages count",
+    "# TYPE trillions_chat_count gauge",
+    `trillions_chat_count ${STATE.metrics.chatCount}`,
+    "# HELP trillions_legacy_present Legacy file detected",
+    "# TYPE trillions_legacy_present gauge",
+    `trillions_legacy_present ${STATE.legacy.present ? 1 : 0}`,
+    "# HELP trillions_prometheus_scrapes Total Prometheus scrapes",
+    "# TYPE trillions_prometheus_scrapes counter",
+    `trillions_prometheus_scrapes ${STATE.prometheus.scrapes}`
+  ];
+  res.type("text/plain").send(lines.join("\n")+"\n");
+});
+
+/* UI */
+
+APP.get("/",(req,res)=>res.type("html").send(`<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>TRILLIONS GENESIS V9</title>
+<style>
+:root{--bg:#000;--panel:#06120d;--line:#00ff99;--cyan:#35eaff;--txt:#b8ffdc;--muted:#6b9;--red:#ff4040;--yellow:#ffd166;--blue:#78a6ff}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at top,#052016,#000 45%);color:var(--txt);font-family:Consolas,ui-monospace,monospace;padding:10px}
+h1{font-size:18px;margin:0;color:var(--cyan);text-shadow:0 0 10px var(--cyan)}
+.sub{font-size:11px;color:var(--muted);margin:3px 0 10px}
+.grid{display:grid;grid-template-columns:1fr;gap:10px}
+.card{border:1px solid var(--line);background:rgba(3,17,10,.88);padding:10px;box-shadow:0 0 18px rgba(0,255,153,.08)}
+.card h3{margin:0 0 8px;color:var(--cyan);font-size:13px}
+.tabs{display:flex;gap:5px;overflow-x:auto;padding-bottom:5px}
+.tab{white-space:nowrap;border:1px solid #096;padding:5px 8px;font-size:11px;border-radius:10px;background:#00170c}
+.ACTIVE,.OK{border-color:var(--line);color:var(--line)}
+.STANDBY{border-color:var(--yellow);color:var(--yellow)}
+.POSSIBLE{border-color:var(--blue);color:var(--blue)}
+.MISSING{border-color:var(--red);color:var(--red)}
+#logs,#chatbox,#details{height:230px;overflow:auto;background:#000;border:1px solid #085;padding:8px;font-size:11px;line-height:1.45;white-space:pre-wrap}
+#chatbox{height:260px;font-size:12px}
+input,textarea{width:100%;background:#00190d;color:var(--txt);border:1px solid var(--line);padding:8px;font-family:inherit}
+button{background:#001b10;color:var(--txt);border:1px solid var(--line);padding:8px 10px;font-family:inherit;margin:2px}
+.row{display:flex;gap:6px}.row input{flex:1}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px;font-size:11px}
+@media(min-width:900px){.grid{grid-template-columns:1fr 1fr}.wide{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<h1>GENESIS Super IA Suprême Souveraine — TRILLIONS V9</h1>
+<div class="sub">100% gratuit : Pollinations + Prometheus /metrics + WebSocket + onglets statut réel. Aucun état inventé.</div>
+
+<div class="card wide">
+  <h3>Onglets état réel</h3>
+  <div id="tabs" class="tabs"></div>
+</div>
+
+<div class="grid">
+  <div class="card"><h3>Système</h3><div id="system" class="kv"></div></div>
+  <div class="card"><h3>Détails module sélectionné</h3><div id="details">Clique un onglet.</div></div>
+
+  <div class="card wide">
+    <h3>Tchat IA Genesis / Pollinations</h3>
+    <div id="chatbox"></div>
+    <div class="row"><input id="chat" placeholder="Pose n'importe quelle question au runtime Genesis..."><button onclick="sendChat(false)">Send</button><button onclick="sendChat(true)">+État</button></div>
+  </div>
+
+  <div class="card">
+    <h3>Web3 lecture seule</h3>
+    <input id="rpc" placeholder="RPC HTTPS optionnel">
+    <button onclick="probe()">Probe RPC</button>
+    <pre id="web3"></pre>
+  </div>
+
+  <div class="card">
+    <h3>Prometheus</h3>
+    <p>/metrics actif</p>
+    <button onclick="window.open('/metrics','_blank')">Voir metrics</button>
+  </div>
+
+  <div class="card wide">
+    <h3>Terminal libre</h3>
+    <div id="logs"></div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket=io(); let current=null; let selected=null;
+const logs=document.getElementById('logs'), chatbox=document.getElementById('chatbox');
+function addLog(x){logs.textContent+='['+x.channel+'] '+x.ts.slice(11,19)+' -> '+x.message+'\\n';logs.scrollTop=logs.scrollHeight}
+socket.on('log',addLog);
+socket.on('mining',()=>load());
+
+function renderTabs(tabs){
+ const wrap=document.getElementById('tabs');
+ wrap.innerHTML=Object.values(tabs).map(t=>'<button class="tab '+t.status+'" onclick="selectTab(\\''+t.id+'\\')">'+t.label+' : '+t.status+'</button>').join('');
+}
+function selectTab(id){selected=id; const t=current.tabs[id]; document.getElementById('details').textContent=JSON.stringify(t,null,2)}
+function render(s){
+ current=s;
+ renderTabs(s.tabs||{});
+ document.getElementById('system').innerHTML =
+  '<div>Node</div><div>'+s.system.node+'</div>'+
+  '<div>CPU</div><div>'+s.system.cpu+'</div>'+
+  '<div>RAM</div><div>'+s.system.freeRamGB+'/'+s.system.totalRamGB+' GB</div>'+
+  '<div>Legacy</div><div>'+(s.legacy.present?s.legacy.source+' / '+s.legacy.lines+' lignes':'absent')+'</div>'+
+  '<div>Sockets</div><div>'+s.metrics.connectedSockets+'</div>';
+ document.getElementById('web3').textContent=JSON.stringify(s.web3,null,2);
+ if(selected && s.tabs[selected]) selectTab(selected);
+ logs.textContent=''; (s.logs||[]).forEach(addLog);
+}
+async function load(){render(await (await fetch('/api/state')).json())}
+async function sendChat(withState){
+ const input=document.getElementById('chat'); const msg=input.value.trim(); if(!msg)return; input.value='';
+ chatbox.textContent+='> '+msg+'\\n';
+ const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg,withState})});
+ const d=await r.json(); chatbox.textContent+='< '+(d.reply||d.error)+'\\n\\n'; chatbox.scrollTop=chatbox.scrollHeight; load();
+}
+async function probe(){
+ const provider=document.getElementById('rpc').value.trim();
+ const r=await fetch('/api/web3/probe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider})});
+ document.getElementById('web3').textContent=JSON.stringify(await r.json(),null,2); load();
+}
+document.getElementById('chat').addEventListener('keydown',e=>{if(e.key==='Enter')sendChat(false)});
+load(); setInterval(load,10000);
+</script>
+</body>
+</html>`));
+
+IO.on("connection",(socket)=>{
+  CLIENTS.add(socket.id);
+  log("SOCKET","Dashboard connecté "+socket.id.slice(0,8));
+  socket.emit("log",{ts:now(),channel:"GENESIS",message:"Tchat IA libre prêt — Pollinations gratuit"});
+  socket.on("disconnect",()=>CLIENTS.delete(socket.id));
+});
+
+function boot(){
+  scanRuntime();
+  log("BOOT","TRILLIONS GENESIS V9 démarré");
+  log("GENESIS","Super IA Suprême Souveraine prête via Pollinations");
+  log("PROMETHEUS","Endpoint /metrics actif");
+  log("SAFE","No seed / no private key / no auto transaction / factual status only");
+  setInterval(()=>{
+    STATE.tick++;
+    scanRuntime();
+    const msgs=["Runtime vivant","Onglets statut réel mis à jour","Prometheus prêt","Genesis IA standby/active selon usage","Web3 lecture seule possible","Terminal libre actif"];
+    log("TICK",msgs[STATE.tick % msgs.length]);
+  },5000);
+}
+
+boot();
+SERVER.listen(process.env.PORT || 3000,"0.0.0.0",()=>log("HTTP","Port "+(process.env.PORT || 3000)+" actif"));
