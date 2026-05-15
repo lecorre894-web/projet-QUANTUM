@@ -1,0 +1,16 @@
+{
+    "username": "René Le Corre",
+    "country": "FR",
+    "bestScores": {
+        "cinebench": 45200,
+        "3dmark": 25884,
+        "catzilla": 125000,
+        "sandra": 14000
+    },
+    "config": {
+        "cpu": "Ryzen 9 9950X3D",
+        "gpu": "RTX MSI SuprimX 4080 16GB",
+        "ram": "Corsair DDR5 2x32GB 6400MHz"
+    },
+    "trophies": ["roi_cpu", "maitre_gpu", "legendaire"]
+}

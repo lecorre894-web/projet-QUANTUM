@@ -1,0 +1,9 @@
+{
+    "benchmark": {
+        "cinebench": "Cinebench R23",
+        "3dmark": "3DMark Fire Strike"
+    },
+    "errors": {
+        "wasm_not_supported": "WebAssembly n'est pas supporté. Utilisez Chrome ou Firefox."
+    }
+}
